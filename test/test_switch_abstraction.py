@@ -20,16 +20,26 @@ logger = logging.getLogger(__name__)
 
 #*** Testing imports:
 import mock
+import unittest
 
 #*** Ryu imports:
+from ryu.base import app_manager  # To suppress cyclic import
 from ryu.controller import controller
+from ryu.controller import handler
+from ryu.ofproto import ofproto_v1_3_parser
+from ryu.ofproto import ofproto_v1_2_parser
+from ryu.ofproto import ofproto_v1_0_parser
+from ryu.app.wsgi import ControllerBase
 from ryu.app.wsgi import WSGIApplication
+from ryu.app.wsgi import route
 
 #*** JSON imports:
+import json
+from json import JSONEncoder
 
 #*** nmeta2 imports:
 import nmeta2
-from nmeta2 import switch_abstraction
+from nmeta2.switch_abstraction.switches import Switches
 import config
 
 #*** Instantiate Config class:
@@ -40,7 +50,7 @@ _config = config.Config()
 wsgi_app = WSGIApplication()
 nmeta = nmeta2.Nmeta(wsgi=wsgi_app)
 
-switches = switch_abstraction.Switches(nmeta, _config)
+switches = Switches(nmeta, _config)
 
 sock_mock = mock.Mock()
 addr_mock = mock.Mock()
