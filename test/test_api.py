@@ -39,7 +39,7 @@ from json import JSONEncoder
 
 #*** nmeta2 imports:
 import nmeta2
-import switch_abstraction
+#*** --> import switch_abstraction ### NEEDS TO BE CHANGED
 import config
 import api
 import main_policy

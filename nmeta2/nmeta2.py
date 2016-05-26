@@ -58,7 +58,7 @@ from ryu.app.wsgi import WSGIApplication
 
 #*** nmeta imports:
 import config
-import switch_abstraction
+from switch_abstraction import switches
 import api
 import main_policy
 import of_error_decode
@@ -171,7 +171,7 @@ class Nmeta(app_manager.RyuApp):
         JSONEncoder.default = JSONEncoder_newdefault
 
         #*** Instantiate Module Classes:
-        self.switches = switch_abstraction.Switches(self, self.config)
+        self.switches = switches.Switches(self, self.config)
         wsgi = kwargs['wsgi']
         self.api = api.Api(self, self.config, wsgi)
         self.main_policy = main_policy.MainPolicy(self.config)
@@ -269,36 +269,13 @@ class Nmeta(app_manager.RyuApp):
         datapath = ev.msg.datapath
         self.logger.info("In switch_connection_handler dpid=%s", datapath.id)
 
-        #*** Add switch to our class abstraction:
-        self.switches.add(datapath)
-        switch = self.switches[datapath.id]
-
-        #*** Delete all existing flows from the switch:
-        switch.flowtables.delete_all_flows()
-
-        #*** Set the configuration on the switch:
-        switch.set_switch_config(self.ofpc_frag, self.miss_send_len)
-
-        #*** Set up switch flow table basics:
-        switch.flowtables.add_fe_iig_broadcast()
-        switch.flowtables.add_fe_iig_miss()
-        switch.flowtables.add_fe_iim_miss()
-        switch.flowtables.add_fe_tcf_accepts()
-        switch.flowtables.add_fe_tcf_miss()
-        switch.flowtables.add_fe_tc_miss()
-        switch.flowtables.add_fe_tt_miss()
-        switch.flowtables.add_fe_fwd_miss()
-
-        #*** Set flow entry for DPAE join packets:
-        switch.flowtables.add_fe_iig_dpae_join()
-
-        #*** Install non-DPAE static TC flows from optimised policy to switch:
-        switch.flowtables.add_fe_tc_static \
-                              (self.main_policy.optimised_rules.get_rules())
-
-        #*** Request the switch send us it's description:
-        switch.request_switch_desc()
-
+        #*** Before we add the switch we request that it send us it's
+        #*** description.
+        parser = datapath.ofproto_parser
+        req = parser.OFPDescStatsRequest(datapath, 0)
+        self.logger.debug("Sending description request to dpid=%s",
+                          datapath.id)
+        datapath.send_msg(req)
 
     @set_ev_cls(ofp_event.EventOFPDescStatsReply, MAIN_DISPATCHER)
     def desc_stats_reply_handler(self, ev):
@@ -313,6 +290,11 @@ class Nmeta(app_manager.RyuApp):
                       'hw_desc="%s" sw_desc="%s" serial_num="%s" dp_desc="%s"',
                       dpid, body.mfr_desc, body.hw_desc, body.sw_desc,
                       body.serial_num, body.dp_desc)
+        #*** Add switch to our class abstraction:
+        if not self.switches.add(datapath, body.hw_desc, body.sw_desc):
+            return
+        switch = self.switches[dpid]
+        self._configure_switch(switch)
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
@@ -597,6 +579,36 @@ class Nmeta(app_manager.RyuApp):
                                     tc_subtype, detail1)
         else:
             self.logger.info("Didn't action tc_subtype=%s", tc_subtype)
+
+    def _configure_switch(self, switch):
+        """
+        Configure a switch for use with nmeta2.
+        Args:
+            switch: Representation of the switch to configure.
+        """
+        self.logger.info("Configuring switch %s...", switch.dpid)
+        #*** Delete all existing flows from the switch:
+        switch.flowtables.delete_all_flows()
+
+        #*** Set the configuration on the switch:
+        switch.set_switch_config(self.ofpc_frag, self.miss_send_len)
+
+        #*** Set up switch flow table basics:
+        switch.flowtables.add_fe_iig_broadcast()
+        switch.flowtables.add_fe_iig_miss()
+        switch.flowtables.add_fe_iim_miss()
+        switch.flowtables.add_fe_tcf_accepts()
+        switch.flowtables.add_fe_tcf_miss()
+        switch.flowtables.add_fe_tc_miss()
+        switch.flowtables.add_fe_tt_miss()
+        switch.flowtables.add_fe_fwd_miss()
+
+        #*** Set flow entry for DPAE join packets:
+        switch.flowtables.add_fe_iig_dpae_join()
+
+        #*** Install non-DPAE static TC flows from optimised policy to switch:
+        switch.flowtables.add_fe_tc_static \
+                              (self.main_policy.optimised_rules.get_rules())
 
     def _packet_in_debug(self, ev, in_port):
         """
