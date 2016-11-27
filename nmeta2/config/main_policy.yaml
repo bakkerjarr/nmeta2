@@ -53,5 +53,5 @@ port_sets:
     #  features are applied on:
     all_access_ports:
         - 'sw1-virtual':
-            DPID: 1
+            DPID: 246406201197897
             ports: 1
