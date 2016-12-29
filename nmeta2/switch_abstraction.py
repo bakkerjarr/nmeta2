@@ -693,13 +693,19 @@ class FlowTables(object):
         more packets to it for a specific flow. Install an FE to
         switch for each direction of the flow to bypass sending to DPAE.
         .
-        Only supports IPv4 and TCP at this stage.
+        Only supports IPv4, TCP, UDP and ICMP at this stage.
+
+        Jarrod modification: Support for UDP and ICMP over IPv4 and
+        change the idle_timeout to hard_timeout. The timeout change
+        means is motivated by a desire to set a sampling rate for
+        traffic.
         .
         """
         ofproto = self.datapath.ofproto
         parser = self.datapath.ofproto_parser
         #*** Check it's TCP:
-        if suppress_dict['proto'] != 'tcp':
+        if not (suppress_dict['proto'] == 'tcp' or suppress_dict['proto']
+                == 'udp' or suppress_dict['proto'] == 'icmp'):
             self.logger.error("Unsupported proto=%s", suppress_dict['proto'])
             return 0
 
@@ -708,13 +714,29 @@ class FlowTables(object):
         ipv4_dst = _ipv4_t2i(str(suppress_dict['ip_B']))
 
         #*** Build match:
-        match = parser.OFPMatch(eth_type=0x0800,
-                    ipv4_src=ipv4_src,
-                    ipv4_dst=ipv4_dst,
-                    ip_proto=6,
-                    tcp_src=suppress_dict['tp_A'],
-                    tcp_dst=suppress_dict['tp_B']
-                    )
+        if suppress_dict['proto'] == 'tcp':
+            match = parser.OFPMatch(eth_type=0x0800,
+                        ipv4_src=ipv4_src,
+                        ipv4_dst=ipv4_dst,
+                        ip_proto=6,
+                        tcp_src=suppress_dict['tp_A'],
+                        tcp_dst=suppress_dict['tp_B']
+                        )
+        elif suppress_dict['proto'] == 'udp':
+            match = parser.OFPMatch(eth_type=0x0800,
+                        ipv4_src=ipv4_src,
+                        ipv4_dst=ipv4_dst,
+                        ip_proto=17,
+                        udp_src=suppress_dict['tp_A'],
+                        udp_dst=suppress_dict['tp_B']
+                        )
+        else:
+            # At this point, this must be ICMP
+            match = parser.OFPMatch(eth_type=0x0800,
+                        ipv4_src=ipv4_src,
+                        ipv4_dst=ipv4_dst,
+                        ip_proto=1,
+                        )
         actions = []
         inst = [parser.OFPInstructionActions(
                         ofproto.OFPIT_APPLY_ACTIONS, actions),
@@ -723,21 +745,37 @@ class FlowTables(object):
         priority = 2
         mod = parser.OFPFlowMod(datapath=self.datapath, table_id=self.ft_tcf,
                             priority=priority,
-                            idle_timeout=self.suppress_idle_timeout,
+                            hard_timeout=self.suppress_idle_timeout,
                             match=match, instructions=inst)
         self.logger.debug("Installing suppress forward FE dpid=%s", self.dpid)
         self.datapath.send_msg(mod)
         #*** Build counter match (reversed flow):
-        match = parser.OFPMatch(eth_type=0x0800,
-                    ipv4_src=ipv4_dst,
-                    ipv4_dst=ipv4_src,
-                    ip_proto=6,
-                    tcp_src=suppress_dict['tp_B'],
-                    tcp_dst=suppress_dict['tp_A']
-                    )
+        if suppress_dict['proto'] == 'tcp':
+            match = parser.OFPMatch(eth_type=0x0800,
+                        ipv4_src=ipv4_dst,
+                        ipv4_dst=ipv4_src,
+                        ip_proto=6,
+                        tcp_src=suppress_dict['tp_B'],
+                        tcp_dst=suppress_dict['tp_A']
+                        )
+        elif suppress_dict['proto'] == 'udp':
+            match = parser.OFPMatch(eth_type=0x0800,
+                        ipv4_src=ipv4_dst,
+                        ipv4_dst=ipv4_src,
+                        ip_proto=17,
+                        udp_src=suppress_dict['tp_B'],
+                        udp_dst=suppress_dict['tp_B']
+                        )
+        else:
+            # At this point, this must be ICMP
+            match = parser.OFPMatch(eth_type=0x0800,
+                        ipv4_src=ipv4_dst,
+                        ipv4_dst=ipv4_src,
+                        ip_proto=1,
+                        )
         mod = parser.OFPFlowMod(datapath=self.datapath, table_id=self.ft_tcf,
                             priority=priority,
-                            idle_timeout=self.suppress_idle_timeout,
+                            hard_timeout=self.suppress_idle_timeout,
                             match=match, instructions=inst)
         self.logger.debug("Installing suppress reverse FE dpid=%s", self.dpid)
         self.datapath.send_msg(mod)
